@@ -14,9 +14,21 @@ struct WindowInfo: Encodable {
   let height: Int
 }
 
+struct DisplayInfo: Encodable {
+  let index: Int
+  let id: UInt32
+  let label: String
+  let isMain: Bool
+  let x: Int
+  let y: Int
+  let width: Int
+  let height: Int
+}
+
 enum CLIError: Error, CustomStringConvertible {
   case usage(String)
   case windowNotFound(String)
+  case displayNotFound(String)
   case invalidOutput(String)
   case screenRecordingPermissionRequired
   case noFramesCaptured(String)
@@ -27,6 +39,8 @@ enum CLIError: Error, CustomStringConvertible {
       return message
     case .windowNotFound(let name):
       return "No visible window matched: \(name)"
+    case .displayNotFound(let name):
+      return "No visible display matched: \(name)"
     case .invalidOutput(let path):
       return "Invalid output path: \(path)"
     case .screenRecordingPermissionRequired:
@@ -63,15 +77,26 @@ struct RaftRecord {
       let data = try JSONEncoder.pretty.encode(windows)
       print(String(decoding: data, as: UTF8.self))
 
+    case "list-displays":
+      let displays = try await visibleDisplays()
+      let data = try JSONEncoder.pretty.encode(displays)
+      print(String(decoding: data, as: UTF8.self))
+
     case "record":
-      guard let windowName = flags["window"] else {
-        throw CLIError.usage("Missing --window")
-      }
       guard let output = flags["output"] else {
         throw CLIError.usage("Missing --output")
       }
       let duration = flags["duration"].flatMap(Double.init)
-      try await recordWindow(named: windowName, output: output, duration: duration)
+      let windowName = flags["window"]
+      let displayName = flags["display"]
+      if (windowName == nil) == (displayName == nil) {
+        throw CLIError.usage("Choose exactly one capture target: --window <name> or --display <id|index|main>")
+      }
+      if let windowName {
+        try await recordWindow(named: windowName, output: output, duration: duration)
+      } else if let displayName {
+        try await recordDisplay(matching: displayName, output: output, duration: duration)
+      }
 
     case "help", "--help", "-h":
       printHelp()
@@ -87,7 +112,9 @@ struct RaftRecord {
 
     Commands:
       list-windows
+      list-displays
       record --window <name> --output <file.mp4> [--duration <seconds>]
+      record --display <id|index|main> --output <file.mp4> [--duration <seconds>]
     """)
   }
 }
@@ -141,6 +168,40 @@ func visibleWindows() async throws -> [WindowInfo] {
     }
 }
 
+func visibleDisplays() async throws -> [DisplayInfo] {
+  let content = try await SCShareableContent.excludingDesktopWindows(
+    false,
+    onScreenWindowsOnly: true
+  )
+  let displays = sortedDisplays(content.displays)
+  let mainID = CGMainDisplayID()
+
+  return displays.enumerated().map { index, display in
+    DisplayInfo(
+      index: index + 1,
+      id: display.displayID,
+      label: display.displayID == mainID ? "main" : "display-\(index + 1)",
+      isMain: display.displayID == mainID,
+      x: Int(display.frame.origin.x.rounded()),
+      y: Int(display.frame.origin.y.rounded()),
+      width: Int(display.width),
+      height: Int(display.height)
+    )
+  }
+}
+
+func sortedDisplays(_ displays: [SCDisplay]) -> [SCDisplay] {
+  let mainID = CGMainDisplayID()
+  return displays.sorted { lhs, rhs in
+    if lhs.displayID == mainID { return true }
+    if rhs.displayID == mainID { return false }
+    if lhs.frame.origin.x == rhs.frame.origin.x {
+      return lhs.frame.origin.y < rhs.frame.origin.y
+    }
+    return lhs.frame.origin.x < rhs.frame.origin.x
+  }
+}
+
 func recordWindow(named windowName: String, output: String, duration: Double?) async throws {
   guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
     throw CLIError.screenRecordingPermissionRequired
@@ -154,12 +215,7 @@ func recordWindow(named windowName: String, output: String, duration: Double?) a
     throw CLIError.windowNotFound(windowName)
   }
 
-  let outputURL = URL(fileURLWithPath: output)
-  let outputDir = outputURL.deletingLastPathComponent()
-  try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
-  if FileManager.default.fileExists(atPath: outputURL.path) {
-    try FileManager.default.removeItem(at: outputURL)
-  }
+  let outputURL = try prepareOutputURL(output)
 
   let width = max(2, Int(window.frame.width.rounded()))
   let height = max(2, Int(window.frame.height.rounded()))
@@ -203,6 +259,73 @@ func recordWindow(named windowName: String, output: String, duration: Double?) a
   }
 }
 
+func recordDisplay(matching selector: String, output: String, duration: Double?) async throws {
+  guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
+    throw CLIError.screenRecordingPermissionRequired
+  }
+
+  let content = try await SCShareableContent.excludingDesktopWindows(
+    false,
+    onScreenWindowsOnly: true
+  )
+  let displays = sortedDisplays(content.displays)
+  guard let display = findDisplay(matching: selector, in: displays) else {
+    throw CLIError.displayNotFound(selector)
+  }
+
+  let outputURL = try prepareOutputURL(output)
+  let width = max(2, Int(display.width))
+  let height = max(2, Int(display.height))
+  let recorder = try WindowRecorder(outputURL: outputURL, width: width, height: height)
+
+  let configuration = SCStreamConfiguration()
+  configuration.width = width
+  configuration.height = height
+  configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
+  configuration.queueDepth = 6
+  configuration.pixelFormat = kCVPixelFormatType_32BGRA
+  configuration.showsCursor = true
+
+  let filter = SCContentFilter(display: display, excludingWindows: [])
+  let stream = SCStream(filter: filter, configuration: configuration, delegate: recorder)
+  try stream.addStreamOutput(recorder, type: .screen, sampleHandlerQueue: recorder.queue)
+
+  let stopController = StopController(stream: stream, recorder: recorder)
+  recorder.onStreamStoppedWithError = { error in
+    fputs("ScreenCaptureKit stopped: \(error)\n", stderr)
+    stopController.stopAndExit()
+  }
+  let signalSources = installSignalHandler {
+    stopController.stopAndExit()
+  }
+  defer { _ = signalSources }
+
+  try await stream.startCapture()
+
+  if let duration {
+    try await Task.sleep(nanoseconds: UInt64(max(0, duration) * 1_000_000_000))
+    try await stream.stopCapture()
+    await recorder.finish()
+    if recorder.capturedFrameCount == 0 {
+      throw CLIError.noFramesCaptured(output)
+    }
+  } else {
+    while true {
+      try await Task.sleep(nanoseconds: 1_000_000_000)
+    }
+  }
+}
+
+func prepareOutputURL(_ output: String) throws -> URL {
+  let outputURL = URL(fileURLWithPath: output)
+  let outputDir = outputURL.deletingLastPathComponent()
+  try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+  if FileManager.default.fileExists(atPath: outputURL.path) {
+    try FileManager.default.removeItem(at: outputURL)
+  }
+  return outputURL
+}
+
 func findWindow(named name: String, in windows: [SCWindow]) -> SCWindow? {
   let query = name.lowercased()
   return windows.first { window in
@@ -210,6 +333,23 @@ func findWindow(named name: String, in windows: [SCWindow]) -> SCWindow? {
     let app = (window.owningApplication?.applicationName ?? "").lowercased()
     return title.contains(query) || app.contains(query)
   }
+}
+
+func findDisplay(matching selector: String, in displays: [SCDisplay]) -> SCDisplay? {
+  let query = selector.lowercased()
+  if query == "main" || query == "primary" {
+    return displays.first { $0.displayID == CGMainDisplayID() } ?? displays.first
+  }
+  if let number = UInt32(query) {
+    if let display = displays.first(where: { $0.displayID == number }) {
+      return display
+    }
+    let index = Int(number)
+    if index >= 1, index <= displays.count {
+      return displays[index - 1]
+    }
+  }
+  return nil
 }
 
 final class WindowRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {

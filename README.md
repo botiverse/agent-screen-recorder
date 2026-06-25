@@ -7,14 +7,17 @@ The v0 design follows one principle: when an agent drives UI with Playwright, th
 ## Current Scope
 
 - `run`: execute a Playwright scenario and save `raw.webm` plus `metadata.json`.
+- `windows` / `displays`: list native macOS capture targets.
+- `start` / `stop`: record a native macOS window or display in the background.
 - `frame`: extract a PNG frame by timestamp or interaction id.
 - `render`: create an interaction-focused MP4/GIF-friendly video by trimming idle time and zooming to recorded click coordinates.
 - `inspect`: print a concise summary of a recording.
 
-There are two first-class v0 capture paths:
+There are three first-class v0 capture paths:
 
 - Browser/webapp: deterministic Playwright recording plus ground-truth interaction metadata.
 - Native macOS window: ScreenCaptureKit-based window recording for Electron, menu bar apps, and Raft Computer flows that Playwright cannot see.
+- Full desktop/display: ScreenCaptureKit-based display recording for multi-window, OAuth callback, system prompt, and desktop-wide QA flows.
 
 ## Install
 
@@ -71,6 +74,31 @@ Path B lifecycle guarantees:
 - Only one native recording session can be active; a second `start` fails instead of overwriting `.agent-recorder-session.json`.
 - If the target window closes or ScreenCaptureKit stops unexpectedly after frames were captured, the recorder finalizes the MP4 before exit so the file keeps its `moov` atom.
 - `stop` waits for native finalization when the recorder is still running, cleans stale sessions when the PID has already exited, and returns human-readable errors for no-session/dead-session cases.
+
+## Record Full Desktop / Display
+
+```bash
+pnpm cli -- displays
+
+pnpm cli -- start \
+  --full-desktop \
+  --out recordings
+
+# or target a listed display explicitly
+pnpm cli -- start \
+  --display main \
+  --out recordings
+
+# perform the multi-window or desktop-wide flow
+
+pnpm cli -- stop
+
+pnpm cli -- package \
+  --input recordings/<run>/desktop.mp4 \
+  --out recordings/<run>/upload.mp4
+```
+
+Path C uses the same native session lifecycle as Path B. It validates that the requested display exists before writing a session, rejects a second active `start`, finalizes the MP4 on `stop`, and packages the result through the same upload-friendly MP4 path. Treat Path C as required v0 coverage for flows where the useful evidence spans multiple windows or system UI instead of one app window.
 
 ## Extract A QA Frame
 

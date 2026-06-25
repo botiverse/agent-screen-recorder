@@ -11,6 +11,7 @@ import { createRunId } from "./metadata.js";
 const commands = new Set([
   "run",
   "windows",
+  "displays",
   "start",
   "stop",
   "frame",
@@ -73,16 +74,21 @@ async function main() {
     return;
   }
 
+  if (command === "displays") {
+    requireNativeBinary();
+    await runForeground(nativeBinary, ["list-displays"]);
+    return;
+  }
+
   if (command === "start") {
     requireNativeBinary();
-    requireFlag(args, "window");
+    const target = await resolveNativeTarget(args);
     await ensureNoLiveSession();
-    await ensureWindowExists(args.window);
     const outRoot = path.resolve(args.out || args.outputDir || "recordings");
-    const runDir = path.join(outRoot, createRunId(args.name || args.window));
+    const runDir = path.join(outRoot, createRunId(args.name || target.name));
     await mkdir(runDir, { recursive: true });
-    const output = path.resolve(args.output || path.join(runDir, "native-window.mp4"));
-    const nativeArgs = ["record", "--window", args.window, "--output", output];
+    const output = path.resolve(args.output || path.join(runDir, target.defaultFile));
+    const nativeArgs = ["record", target.nativeFlag, target.nativeValue, "--output", output];
     if (args.duration) {
       nativeArgs.push("--duration", args.duration);
     }
@@ -102,11 +108,12 @@ async function main() {
     const session = {
       pid: child.pid,
       startedAt: new Date().toISOString(),
-      window: args.window,
+      targetType: target.type,
+      target: target.name,
       output
     };
     await writeFile(sessionFile, `${JSON.stringify(session, null, 2)}\n`);
-    console.log(`Native window recording started: pid=${child.pid}`);
+    console.log(`Native ${target.type} recording started: pid=${child.pid}`);
     console.log(`Output: ${output}`);
     return;
   }
@@ -117,7 +124,7 @@ async function main() {
     if (!isProcessAlive(pid)) {
       await unlink(sessionFile).catch(() => {});
       if (await outputHasBytes(session.output)) {
-        console.log(`Native window recording already stopped: pid=${pid}`);
+        console.log(`Native recording already stopped: pid=${pid}`);
         console.log(`Output: ${session.output}`);
         return;
       }
@@ -129,7 +136,7 @@ async function main() {
     console.log(`Stop signal sent to pid=${pid}`);
     await waitForPidExit(pid, Number(args.timeoutMs || args["timeout-ms"] || 15000));
     await unlink(sessionFile).catch(() => {});
-    console.log(`Native window recording stopped: pid=${pid}`);
+    console.log(`Native recording stopped: pid=${pid}`);
     console.log(`Output: ${session.output}`);
     return;
   }
@@ -231,8 +238,9 @@ function printHelp() {
 Commands:
   run      Record a Playwright scenario to raw.webm + metadata.json
   windows  List capturable macOS windows via ScreenCaptureKit
-  start    Start native macOS window recording in the background
-  stop     Stop the active native macOS window recording
+  displays List capturable macOS displays via ScreenCaptureKit
+  start    Start native macOS window/display recording in the background
+  stop     Stop the active native macOS recording
   frame    Extract a PNG frame by --at-ms or --interaction
   render   Render interaction-focused MP4 clips
   package  Compress/transcode video to upload-friendly MP4
@@ -241,7 +249,10 @@ Commands:
 Examples:
   pnpm cli -- run --name qa-flow --url http://localhost:3000 --scenario examples/basic-scenario.mjs --out recordings --headed
   pnpm cli -- windows
+  pnpm cli -- displays
   pnpm cli -- start --window "Raft Computer" --out recordings
+  pnpm cli -- start --full-desktop --out recordings
+  pnpm cli -- start --display main --out recordings
   pnpm cli -- stop
   pnpm cli -- frame --recording recordings/qa-flow-... --interaction 1 --out frame.png
   pnpm cli -- render --recording recordings/qa-flow-... --out demo.mp4
@@ -292,12 +303,58 @@ async function runCapture(command, args) {
   });
 }
 
+async function resolveNativeTarget(args) {
+  const chosenTargets = ["window", "display", "full-desktop"].filter((key) => Boolean(args[key]));
+  if (chosenTargets.length !== 1) {
+    throw new Error(
+      "Choose exactly one native target: --window <name>, --display <id|index|main>, or --full-desktop"
+    );
+  }
+
+  if (args.window) {
+    if (args.window === true) {
+      throw new Error("Missing value for --window");
+    }
+    await ensureWindowExists(args.window);
+    return {
+      type: "window",
+      name: args.window,
+      nativeFlag: "--window",
+      nativeValue: args.window,
+      defaultFile: "native-window.mp4"
+    };
+  }
+
+  const displaySelector = args["full-desktop"] ? "main" : args.display;
+  if (displaySelector === true) {
+    throw new Error("Missing value for --display");
+  }
+  await ensureDisplayExists(displaySelector);
+  return {
+    type: "display",
+    name: args["full-desktop"] ? "full-desktop" : `display-${displaySelector}`,
+    nativeFlag: "--display",
+    nativeValue: String(displaySelector),
+    defaultFile: "desktop.mp4"
+  };
+}
+
 async function ensureWindowExists(windowName) {
   const windows = await readNativeWindows();
   const match = findMatchingWindow(windows, windowName);
   if (!match) {
     throw new Error(
       `No visible window matched: ${windowName}. Run "pnpm cli -- windows" to inspect available targets.`
+    );
+  }
+}
+
+async function ensureDisplayExists(displaySelector) {
+  const displays = await readNativeDisplays();
+  const match = findMatchingDisplay(displays, displaySelector);
+  if (!match) {
+    throw new Error(
+      `No visible display matched: ${displaySelector}. Run "pnpm cli -- displays" to inspect available targets.`
     );
   }
 }
@@ -311,12 +368,41 @@ async function readNativeWindows() {
   }
 }
 
+async function readNativeDisplays() {
+  const { stdout } = await runCapture(nativeBinary, ["list-displays"]);
+  try {
+    return JSON.parse(stdout);
+  } catch (error) {
+    throw new Error(`Failed to parse native display list: ${error.message}`);
+  }
+}
+
 export function findMatchingWindow(windows, query) {
   const needle = String(query || "").toLowerCase();
   return windows.find((window) => {
     const title = String(window.title || "").toLowerCase();
     const app = String(window.app || "").toLowerCase();
     return title.includes(needle) || app.includes(needle);
+  });
+}
+
+export function findMatchingDisplay(displays, query) {
+  const needle = String(query || "").toLowerCase();
+  if (!needle) {
+    return undefined;
+  }
+  if (needle === "main" || needle === "primary") {
+    return displays.find((display) => Boolean(display.isMain)) || displays[0];
+  }
+
+  const numeric = Number(needle);
+  if (Number.isInteger(numeric)) {
+    return displays.find((display) => display.index === numeric || display.id === numeric);
+  }
+
+  return displays.find((display) => {
+    const label = String(display.label || "").toLowerCase();
+    return label.includes(needle);
   });
 }
 
@@ -328,8 +414,9 @@ async function ensureNoLiveSession() {
 
   const pid = Number(session.pid);
   if (Number.isFinite(pid) && isProcessAlive(pid)) {
+    const target = session.target || session.window || "unknown";
     throw new Error(
-      `A native recording session is already active: pid=${pid}, window="${session.window}", output=${session.output}. Run "pnpm cli -- stop" before starting another recording.`
+      `A native recording session is already active: pid=${pid}, target="${target}", output=${session.output}. Run "pnpm cli -- stop" before starting another recording.`
     );
   }
 
@@ -343,7 +430,7 @@ async function readSession({ required }) {
   } catch (error) {
     if (error.code === "ENOENT") {
       if (required) {
-        throw new Error("No active native recording session. Start one with: pnpm cli -- start --window \"<name>\" --out recordings");
+        throw new Error("No active native recording session. Start one with: pnpm cli -- start --window \"<name>\" --out recordings, or pnpm cli -- start --full-desktop --out recordings");
       }
       return null;
     }
