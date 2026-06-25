@@ -196,6 +196,7 @@ async function main() {
       interactions: metadata.interactions.map((entry) => ({
         id: entry.id,
         type: entry.type,
+        t: entry.t,
         tMs: entry.tMs,
         label: entry.label,
         selector: entry.selector,

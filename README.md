@@ -128,7 +128,7 @@ pnpm cli -- render \
 - `runId`, `name`, `startedAt`, `endedAt`
 - `viewport`
 - `video.rawPath`
-- `interactions[]` with `id`, `type`, `tMs`, `selector`, `label`, `x`, `y`, and optional element box metadata
+- `interactions[]` with `id`, `type`, `t` in milliseconds from `recordVideo.clockOrigin`, `tMs` as a backward-compatible alias, `selector`, `label`, `x`, `y`, and optional element box metadata
 
 The metadata is the durable contract for future Raft CLI integration and a human review app.
 

@@ -16,10 +16,12 @@ export function createInteractionRecorder(page, metadata, startedAtMs) {
   const elapsed = () => Math.max(0, Math.round(performance.now() - startedAtMs));
 
   const push = (entry) => {
+    const t = elapsed();
     const interaction = {
+      ...entry,
       id: nextId++,
-      tMs: elapsed(),
-      ...entry
+      t,
+      tMs: t
     };
     metadata.interactions.push(interaction);
     return interaction;

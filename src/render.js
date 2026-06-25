@@ -67,7 +67,7 @@ export function createClipPlans(metadata, options = {}) {
   return metadata.interactions
     .filter((entry) => Number.isFinite(entry.x) && Number.isFinite(entry.y))
     .map((entry) => {
-      const startMs = Math.max(0, Number(entry.tMs) - preMs);
+      const startMs = Math.max(0, interactionTime(entry) - preMs);
       const durationMs = Math.max(250, preMs + postMs);
       const interactionZoom = resolveInteractionZoom({ entry, width, defaultZoom: zoom });
       return {
@@ -213,7 +213,7 @@ export function resolveTime(metadata, { atMs, interactionId }) {
     if (!interaction) {
       throw new Error(`Interaction not found: ${interactionId}`);
     }
-    return Number(interaction.tMs);
+    return interactionTime(interaction);
   }
 
   if (atMs === undefined) {
@@ -252,6 +252,14 @@ function resolveInteractionZoom({ entry, width, defaultZoom }) {
     return Math.max(1, width / Math.min(width, contentW));
   }
   return Math.max(1, Number(defaultZoom) || 1);
+}
+
+function interactionTime(entry) {
+  const t = Number(entry.t ?? entry.tMs);
+  if (!Number.isFinite(t)) {
+    throw new Error(`Interaction has no finite timestamp: ${entry.id}`);
+  }
+  return t;
 }
 
 function escapeConcatPath(filePath) {

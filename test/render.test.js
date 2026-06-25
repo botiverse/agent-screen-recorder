@@ -113,12 +113,20 @@ test("buildFocalLockTransform starts from unshifted full-frame view", () => {
 test("resolveTime can resolve by interaction id or explicit timestamp", () => {
   const metadata = {
     interactions: [
-      { id: 1, tMs: 1234 },
-      { id: 2, tMs: 4567 }
+      { id: 1, t: 1234, tMs: 1234 },
+      { id: 2, t: 4567, tMs: 4567 }
     ]
   };
 
   assert.equal(resolveTime(metadata, { interactionId: 2 }), 4567);
   assert.equal(resolveTime(metadata, { atMs: 900 }), 900);
   assert.throws(() => resolveTime(metadata, { interactionId: 99 }), /Interaction not found/);
+});
+
+test("resolveTime accepts legacy tMs-only interactions", () => {
+  assert.equal(resolveTime({
+    interactions: [
+      { id: 1, tMs: 3210 }
+    ]
+  }, { interactionId: 1 }), 3210);
 });
