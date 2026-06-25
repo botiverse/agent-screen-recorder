@@ -1,0 +1,29 @@
+{
+  "name": "@raft/agent-screen-recorder",
+  "version": "0.1.0",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/botiverse/agent-screen-recorder.git"
+  },
+  "type": "module",
+  "bin": {
+    "agent-recorder": "./src/cli.js"
+  },
+  "scripts": {
+    "check": "node --check src/*.js test/*.test.js",
+    "cli": "node ./src/cli.js",
+    "native:build": "mkdir -p native/macos-recorder/.build/release && xcrun swiftc -swift-version 6 -O -parse-as-library -framework ScreenCaptureKit -framework AVFoundation -framework AppKit -framework CoreGraphics -o native/macos-recorder/.build/release/raft-record native/macos-recorder/Sources/raft-record/main.swift",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "ffmpeg-static": "^5.2.0",
+    "playwright": "^1.54.0"
+  },
+  "devDependencies": {},
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "ffmpeg-static"
+    ]
+  }
+}

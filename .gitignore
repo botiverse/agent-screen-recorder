@@ -1,0 +1,9 @@
+node_modules/
+tmp-recordings/
+recordings/
+native/macos-recorder/.build/
+.agent-recorder-session.json
+.DS_Store
+
+# Internal notes or Slock attachments used while prototyping.
+references/
