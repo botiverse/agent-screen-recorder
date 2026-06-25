@@ -1,8 +1,8 @@
 # Agent Screen Recorder
 
-CLI-first screen recording and demo rendering tool for Raft agents.
+CLI-first screen recording and demo rendering tool for coding agents and the teams that review their work.
 
-The v0 design follows one principle: when an agent drives UI with Playwright, the interaction metadata is ground truth. The recorder should capture video and metadata together, then use that metadata for QA evidence, trimming, zoom, and annotations.
+The v0 design follows one principle: when an agent drives UI with Playwright, the interaction metadata is ground truth. The recorder should capture video and metadata together, then use that metadata for QA evidence, trimming, zoom, and annotations. It is a standalone macOS tool; it does not depend on the Raft codebase or APIs. Raft is the first internal customer and acceptance target, but the same workflow applies to any team using agents for coding, review, QA verification, or end-to-end demos.
 
 ## Current Scope
 
@@ -84,6 +84,13 @@ pnpm cli -- start \
   --full-desktop \
   --out recordings
 
+# optional: arrange key windows before recording so the proof shows the full flow
+pnpm cli -- start \
+  --full-desktop \
+  --tile "Raft Desktop" "Google Chrome" \
+  --keep-layout \
+  --out recordings
+
 # or target a listed display explicitly
 pnpm cli -- start \
   --display main \
@@ -99,6 +106,10 @@ pnpm cli -- package \
 ```
 
 Path C uses the same native session lifecycle as Path B. It validates that the requested display exists before writing a session, rejects a second active `start`, finalizes the MP4 on `stop`, and packages the result through the same upload-friendly MP4 path. Treat Path C as required v0 coverage for flows where the useful evidence spans multiple windows or system UI instead of one app window.
+
+For multi-window proof capture, add `--tile` with the windows that must remain visible. The CLI uses macOS accessibility scripting to arrange matching windows into a two-up, three-up, or grid layout before starting full-desktop recording. `--keep-layout` starts a small background correction loop that reapplies the layout every 750 ms by default; stop cleans that loop with the recording session.
+
+The native `metadata.json` records the proof layout: window queries, matched app/title, requested bounds, actual bounds, layout preset, and keep-layout correction count. This is intended for e2e proofs where a reviewer must continuously see both sides of a flow, for example a desktop app waiting for a device code while a browser approves the login.
 
 ## Extract A QA Frame
 
