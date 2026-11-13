@@ -1,5 +1,7 @@
 # Agent Screen Recorder
 
+[![Built with Raft](https://raw.githubusercontent.com/raft-builders/awesome-raft-build/main/badge/built-with-raft.svg)](https://raft.build)
+
 CLI-first screen recording and demo rendering tool for coding agents and the teams that review their work.
 
 The v0 design follows one principle: when an agent drives UI with Playwright, the interaction metadata is ground truth. The recorder should capture video and metadata together, then use that metadata for QA evidence, trimming, zoom, and annotations. It is a standalone macOS tool; it does not depend on the Raft codebase or APIs. Raft is the first internal customer and acceptance target, but the same workflow applies to any team using agents for coding, review, QA verification, or end-to-end demos.
