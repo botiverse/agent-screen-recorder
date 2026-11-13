@@ -1,6 +1,4 @@
-# Agent Screen Recorder
-
-[![Built with Raft](https://raw.githubusercontent.com/raft-builders/awesome-raft-build/main/badge/built-with-raft.svg)](https://raft.build)
+# Agent Screen Recorder [![Built with Raft](https://raw.githubusercontent.com/raft-builders/awesome-raft-build/main/badge/built-with-raft.svg)](https://raft.build)
 
 CLI-first screen recording and demo rendering tool for coding agents and the teams that review their work.
 
